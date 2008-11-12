@@ -20,6 +20,38 @@
 // this file is the client side of tcp-tftp application
 #ifdef SERVER_BUILD
 #include "tftp.h"
+#include <pthread.h>
+// defines:
+#define MAX_STRING 255
+#define BACKLOG 5
+#define DEFAULT_SERVER_PORT 5069
+#define NUM_OF_SLAVES 2
+// globals:
+char gScwd[NUM_OF_SLAVES][MAX_STRING+1] = {{"/tmp"},{"/tmp"}};
+int logFile = -1;
+// data structures:
+typedef enum _Status{IDLE,TRANSFERING,FAIL,DONE}Status;
+typedef struct _s_jobDescriptor
+{
+    char cp_client[16];//max string is '111.111.111.111\0'
+    char cp_fileName[MAX_STRING+1];
+    Status status;
+
+}s_jobDescriptor;
+
+/*
+ * initialize server:
+ * 1. prepare worker threads
+ * 2. bind to listening socket
+ * 3. open log file
+ */
+int init(ushort *port);
+// start to receive connections
+int start();
+// stop listening to connections
+int stop();
+//log function
+void dlog(s_jobDescriptor *jd);
 int main(int argc, char *argv[])
 {
   printf("Hello, Server!\n");

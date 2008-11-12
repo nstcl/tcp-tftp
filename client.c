@@ -19,11 +19,14 @@
  ***************************************************************************/
 // this file is the client side of tcp-tftp application
 #ifdef CLIENT_BUILD
+
 #include "tftp.h"
+#include <netdb.h>
 int main(int argc, char *argv[])
 {
   printf("Hello, Client!\n");
   return EXIT_SUCCESS;
 }
+
 #endif
 
