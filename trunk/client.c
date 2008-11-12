@@ -18,3 +18,12 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 // this file is the client side of tcp-tftp application
+#ifdef CLIENT_BUILD
+#include "tftp.h"
+int main(int argc, char *argv[])
+{
+  printf("Hello, Client!\n");
+  return EXIT_SUCCESS;
+}
+#endif
+
