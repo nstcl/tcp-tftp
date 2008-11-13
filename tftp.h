@@ -27,7 +27,17 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <time.h>
+#include <errno.h>
+#include <string.h>
 
+/************ general defines ****************/
+#define SUCCESS 0
+#define CRITICAL -1
+#define WARNING -2
+#define INFO -3
+#define DEBUG -4
+/*********************************************/
 /*
  * Trivial File Transfer Protocol (IEN-133) - based on arpa/tftp.h
  */
