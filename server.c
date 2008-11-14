@@ -31,21 +31,21 @@
 #define LOGLEVEL DEBUG
 ////////////////////// data structures ///////////////////////
 /* job definition */
-typedef enum _Status{IDLE,TRANSFERING,FAIL,DONE}Status;
+typedef enum _Status{IDLE, TRANSFERING, FAIL, ABORT, DONE}Status;
 typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
     char cp_fileName[MAX_STRING+1];
     Status status;
     unsigned int ui_packets;
-    time_t time;
+    double time;
 
 }s_jobDescriptor;
 /* job queue */
 typedef struct _s_jobQ
 {
-    s_jobDescriptor jobQ[MAX_JOBS];
-    int head,tail;
+    s_jobDescriptor Q[MAX_JOBS];
+    int input,output;
 }s_jobQ;
 
 /////////////////// globals /////////////////////////
@@ -54,6 +54,7 @@ FILE *logFile = NULL;
 ushort us_port = DEFAULT_SERVER_PORT;
 s_jobQ jobQ;
 int level = LOGLEVEL;
+char statusStringMap[5][16]={{"IDLE"}, {"TRANSFERING"}, {"FAIL"}, {"ABORT"}, {"DONE"}};
 /////////////////////////function prototypes ////////////////////
 /* bind to listening socket */
 int initNetwork();
@@ -61,8 +62,8 @@ int initNetwork();
 /* open log file */
 int initLog(int l);
 
-/* prepare worker threads */
-int initQ();
+/* prepare worker structures */
+int initQ(s_jobQ *jobQ);
 
 // init server
 int initServer();
@@ -79,7 +80,10 @@ void dlog(int lvl, const char *msg,int jobIndex);
 // free all allocated resources
 void finalize();
 /////////////////// funcion implementation /////////////////////////
-
+/*
+ initialize log facility
+ - l - log level
+ */
 int initLog(int l)
 {
   int err;
@@ -94,6 +98,26 @@ int initLog(int l)
         return WARNING;
     }
    return SUCCESS;
+}
+
+// initialize the job queue
+int initQ(s_jobQ *jq)
+{
+    /*Q[MAX_JOBS];
+    int head,tail;*/
+    int i;
+    jq->output = -1;
+    jq->input = 0;
+    for (i = 0 ; i < MAX_JOBS ;i++)
+    {
+ sprintf(jq->Q[i].cp_fileName, "%s","##EMPTY_FILE##") ;
+ sprintf(jq->Q[i].cp_client, "%s","0.0.0.0") ;
+ jq->Q[i].status = IDLE;
+ jq->Q[i].ui_packets = 0;
+ jq->Q[i].time = 0;
+    }
+    return SUCCESS;
+    
 }
 
 /*
@@ -127,10 +151,28 @@ void dlog(int lvl, const char *msg, int jobIndex)
         {
             fprintf(logFile, "%s: [%s] %s\n",timebuf, logbuf ,msg);
         }
-        if (jobIndex>=0)
-        {
-            printf("job print not implemented yet...\n");
-            if (logFile) fprintf(logFile,"job print not implemented yet...\n");
+ if (jobIndex>=0)
+ {
+     printf("Transfer Report:\n");
+     printf("================\n"); 
+     printf("\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.2f\n",
+     jobQ.Q[jobIndex].cp_client,
+     jobQ.Q[jobIndex].cp_fileName,
+     statusStringMap[jobQ.Q[jobIndex].status],
+     jobQ.Q[jobIndex].ui_packets,
+     jobQ.Q[jobIndex].time);
+     
+     if (logFile) 
+     {
+  fprintf(logFile,"Transfer Report:\n");
+  fprintf(logFile,"================\n");
+  fprintf(logFile, "\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.2f\n",
+   jobQ.Q[jobIndex].cp_client,
+   jobQ.Q[jobIndex].cp_fileName,
+   statusStringMap[jobQ.Q[jobIndex].status],
+   jobQ.Q[jobIndex].ui_packets,
+   jobQ.Q[jobIndex].time);
+     }
         }
 
     }
@@ -152,7 +194,8 @@ int main(int argc, char *argv[])
 {
   printf("Intializing Server!\n");
   initLog(DEBUG);
-  dlog(DEBUG,"testing dlog...",-1);
+  initQ(&jobQ);
+  dlog(DEBUG,"testing dlog...",0);
 
   finalize();
   return EXIT_SUCCESS;
