@@ -1,0 +1,2 @@
+gcc client.c server.c -DSERVER_BUILD -o server -I. -lpthread
+gcc client.c server.c -DCLIENT_BUILD -o client -I.
