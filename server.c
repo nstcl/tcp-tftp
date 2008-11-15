@@ -36,10 +36,12 @@ typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
     char cp_fileName[MAX_STRING+1];
-    Status status;
-    unsigned int ui_packets;
-    double time;
-    int socket;
+    Status status; // transaction status
+    unsigned int ui_packets; // number of packets transfered
+    double d_time; // transfer time
+    int i_socketId; // remote socket id
+    struct sockaddr_in sa_address; // remote ip address
+    socklen_t i_socketSize; // auxiliry variable to hold the size of the sockaddr structure
 
 }s_jobDescriptor;
 /* job queue */
@@ -61,8 +63,11 @@ char statusStringMap[5][16]={{"IDLE"}, {"TRANSFERING"}, {"FAIL"}, {"ABORT"}, {"D
 pthread_t workerThreads[NUM_OF_SLAVES];
 void *retval; // return code for worker threads
 /////////////////////////function prototypes ////////////////////
-/* bind to listening socket */
-int initNetwork();
+/*
+ * 1. create and bind to listening socket
+ * 2. start listening for incoming connections
+ */
+int initNetwork(int *listenSocket, struct sockaddr_in *localAddress);
 
 /* open log file */
 int initLog(int l);
@@ -75,12 +80,6 @@ int initQ(volatile s_jobQ *jobQ);
 
 // init server
 int initServer();
-
-// start to receive connections
-int start();
-
-// stop listening to connections
-int stop();
 
 //general log facility
 void dlog(int lvl, const char *msg,int jobIndex);
@@ -125,8 +124,10 @@ int initQ(volatile s_jobQ *jq)
         sprintf(jq->Q[i].cp_client, "%s","0.0.0.0") ;
         jq->Q[i].status = IDLE;
         jq->Q[i].ui_packets = 0;
-        jq->Q[i].time = 0;
-        jq->Q[i].socket = 0;
+        jq->Q[i].d_time = 0;
+        jq->Q[i].i_socketId = 0;
+        jq->Q[i].i_socketSize = 0;
+
     }
 
     /*
@@ -216,7 +217,7 @@ void dlog(int lvl, const char *msg, int jobIndex)
                    jobQ.Q[jobIndex].cp_fileName,
                    statusStringMap[jobQ.Q[jobIndex].status],
                    jobQ.Q[jobIndex].ui_packets,
-                   jobQ.Q[jobIndex].time);
+                   jobQ.Q[jobIndex].d_time);
 
             if (logFile)
             {
@@ -227,7 +228,7 @@ void dlog(int lvl, const char *msg, int jobIndex)
                         jobQ.Q[jobIndex].cp_fileName,
                         statusStringMap[jobQ.Q[jobIndex].status],
                         jobQ.Q[jobIndex].ui_packets,
-                        jobQ.Q[jobIndex].time);
+                        jobQ.Q[jobIndex].d_time);
             }
         }
 
@@ -235,9 +236,52 @@ void dlog(int lvl, const char *msg, int jobIndex)
 
 }
 
-/* bind to listening socket */
-int initNetwork()
+/*
+ * 1. create and bind to listening socket
+ * 2. start listening for incoming connections
+ */
+int initNetwork(int *listenSocket, struct sockaddr_in *localAddress)
 {
+    char *msg;
+    static int yes = 1; // socket option value: SO_REUSEADDR = yes
+    if ((*listenSocket = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+    {
+        dlog(CRITICAL, "Cannot Create Server Socket. Exiting ....", -1);
+        exit(1);
+    }
+    if (setsockopt(*listenSocket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+    {
+
+        dlog(CRITICAL, "Cannot Set Server Socket Options. Exiting ....", -1);
+        exit(1);
+    }
+
+    localAddress->sin_family = AF_INET;// host byte order
+    localAddress->sin_port = htons(us_port);// short, network byte order
+    localAddress->sin_addr.s_addr = INADDR_ANY;// automatically fill with my IP
+    msg = malloc(800);
+    sprintf(msg,"Server socket (%s:%d) created and configured to be reused.\n(0.0.0.0 means all interfaces)\n",inet_ntoa(localAddress->sin_addr), us_port);
+    dlog(DEBUG, msg,-1);
+    free(msg);
+    /* zero the rest of the struct */
+    memset(&(localAddress->sin_zero), '\0', 8);
+
+    /* bind to socket */
+    if(bind(*listenSocket, (struct sockaddr *)localAddress, sizeof(struct sockaddr)) == -1)
+    {
+        dlog(CRITICAL, "Server-bind() error", -1);
+        exit(1);
+    }
+    else
+        dlog(DEBUG, "Server-bind() is OK...\n", -1);
+
+    if(listen(*listenSocket, BACKLOG) == -1)
+    {
+        dlog(CRITICAL, "Server-listen() error", -1);
+        exit(1);
+    }
+    dlog(INFO, "Server Listening...\n", -1);
+
     return SUCCESS;
 }
 
@@ -273,12 +317,87 @@ void finalize()
 // entry point
 int main(int argc, char *argv[])
 {
+    // server listening socket information
+    int listenSocket;
+    struct sockaddr_in localAddress;
+    char msg[400]; //save 5 lines worth of general message buffer
+    //////////////////////
+    /* check to see if a valid port was entered */
+    if(argc == 2)
+        {
+            if((us_port = atoi(argv[1])) <= 0)
+            {
+                printf("Valid ports are an integer in the range of 1-65535\n");
+                exit(1);
+            }
+        }
+    else
+        if(argc != 1)
+        {
+            printf("Usage: %s <port number> (Default port is at %d)\n",argv[0], DEFAULT_SERVER_PORT);
+            exit(1);
+        }
+
+
     printf("Intializing Server!\n");
     initLog(DEBUG);
     initQ(&jobQ);
+    initNetwork(&listenSocket, &localAddress);
     dlog(DEBUG,"testing dlog...",0);
 
+    /* accept() loop */
+
+    while(1)
+    {
+        if((jobQ.input < MAX_JOBS) && (jobQ.Q[jobQ.input].i_socketSize == 0))
+        {
+            jobQ.Q[jobQ.input].i_socketSize = sizeof(struct sockaddr_in);
+            if((jobQ.Q[jobQ.input].i_socketId = accept(listenSocket, (struct sockaddr *)&(jobQ.Q[jobQ.input].sa_address), (socklen_t *)&(jobQ.Q[jobQ.input].i_socketSize))) == -1)
+            {
+                dlog(WARNING, "Server-accept() error", -1);
+            }
+            else
+            {
+                sprintf(msg,"Server: Got connection from %s\n", inet_ntoa(jobQ.Q[jobQ.input].sa_address.sin_addr));
+                dlog(DEBUG,msg,-1);
+                jobQ.input++;
+            }
+        }
+    }
+/*     sin_size = sizeof(struct sockaddr_in);
+ *     if((new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size)) == -1)
+ *     {
+ *         perror("Server-accept() error");
+ *         continue;
+ *     }
+ *     else
+ *         printf("Server-accept() is OK...\n");
+ *     printf("Server-new socket, new_fd is OK...\n");
+ *     printf("Server: Got connection from %s\n", inet_ntoa(their_addr.sin_addr));
+ ++++++++++++++++++++++++++++++++++++++++++++
+ typedef struct _s_jobDescriptor
+{
+    char cp_client[16];//max string is '111.111.111.111\0'
+    char cp_fileName[MAX_STRING+1];
+    Status status; // transaction status
+    unsigned int ui_packets; // number of packets transfered
+    double d_time; // transfer time
+    int i_socketId; // remote socket id
+    struct sockaddr_in sa_address; // remote ip address
+    int i_socketSize; // auxiliry variable to hold the size of the sockaddr structure
+}s_jobDescriptor;
+typedef struct _s_jobQ
+{
+    s_jobDescriptor Q[MAX_JOBS];
+    int input,output;
+}s_jobQ;
+ */
+
+
+
+
     finalize();
+
     return EXIT_SUCCESS;
 }
 #endif
