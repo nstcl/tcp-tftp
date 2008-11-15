@@ -30,6 +30,7 @@
 #include <time.h>
 #include <errno.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 /************ general defines ****************/
 #define SUCCESS 0
