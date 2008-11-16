@@ -122,8 +122,8 @@ int initQ(volatile s_jobQ *jq)
     jq->input = 0;
     for (i = 0 ; i < MAX_JOBS ;i++)
     {
-        sprintf(jq->Q[i].cp_fileName, "%s","##EMPTY_FILE##") ;
-        sprintf(jq->Q[i].cp_client, "%s","0.0.0.0") ;
+        sprintf((char *)(jq->Q[i].cp_fileName), "%s","##EMPTY_FILE##") ;
+        sprintf((char *)(jq->Q[i].cp_client), "%s","0.0.0.0") ;
         jq->Q[i].status = IDLE;
         jq->Q[i].ui_packets = 0;
         jq->Q[i].d_time = 0;
@@ -449,7 +449,7 @@ int main(int argc, char *argv[])
             else
             {
                 char *tmp = inet_ntoa(jobQ.Q[jobQ.input].sa_address.sin_addr);
-                strncpy(jobQ.Q[jobQ.input].cp_client , tmp, strlen(tmp));
+                strncpy((char *)(jobQ.Q[jobQ.input].cp_client) , tmp, strlen(tmp));
                 sprintf(msg,"Server: Got connection from %s (socket_id=%d)\n", tmp,jobQ.Q[jobQ.input].i_socketId);
                 dlog(DEBUG,msg,-1);
                 pthread_mutex_lock(&jobQ_lock);
