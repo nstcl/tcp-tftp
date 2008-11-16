@@ -31,7 +31,7 @@
 #define LOGLEVEL DEBUG
 ////////////////////// data structures ///////////////////////
 /* job definition */
-typedef enum _Status {IDLE, TRANSFERING, FAIL, ABORT, DONE}Status;
+typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status;
 typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
@@ -59,9 +59,11 @@ ushort us_port = DEFAULT_SERVER_PORT;
 volatile s_jobQ jobQ; // job queue structure
 pthread_mutex_t jobQ_lock;
 int level = LOGLEVEL;
-char statusStringMap[5][16]={{"IDLE"}, {"TRANSFERING"}, {"FAIL"}, {"ABORT"}, {"DONE"}};
+char statusStringMap[6][16]={{"IDLE"}, {"ASSIGNED"}, {"TRANSFERING"}, {"FAIL"}, {"ABORT"}, {"DONE"}};
 pthread_t workerThreads[NUM_OF_SLAVES];
 void *retval; // return code for worker threads
+struct sigaction osa; // structure to help handling proper termination when CTRL+C is pressed
+int kill_thread_flag = 1;
 /////////////////////////function prototypes ////////////////////
 /*
  * 1. create and bind to listening socket
@@ -88,7 +90,7 @@ void dlog(int lvl, const char *msg,int jobIndex);
 void *worker(void *id);
 
 // free all allocated resources
-void finalize();
+void finalize(int sig_no);
 /////////////////// funcion implementation /////////////////////////
 /*
  initialize log facility
@@ -156,12 +158,88 @@ int initQ(volatile s_jobQ *jq)
  * input: id(integer) - worker id
  * output: result code
  */
+ ///TODO when transfer ends initialize job descriptor for reuse
 void *worker(void *id)
 {
+
     int wid = *((int *)id);
     char msg[32];
+    sigset_t empty_set;
+    sigemptyset(&empty_set); // create an empty signal mask to reject all signals
+    sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
     sprintf(msg,"slave number %d started\n",wid);
     dlog(DEBUG,msg,-1);
+
+    while(kill_thread_flag)
+    {
+        //printf("%d",wid);
+        int currentJob = -1;
+        pthread_mutex_lock(&jobQ_lock); // protect queue pointer
+        if(jobQ.input-jobQ.output == MAX_JOBS) jobQ.output = -1; // cycle queue output index
+        if((jobQ.Q[jobQ.output+1].status != IDLE) && (jobQ.Q[jobQ.output+1].i_socketId != 0))
+        {
+            //printf("***************** thread(%d) input:%d \t output:%d \tsid=%d \tstatus=%s ******\n",wid,jobQ.input,jobQ.output,jobQ.Q[jobQ.output+1].i_socketId, statusStringMap[jobQ.Q[jobQ.output+1].status]);
+            jobQ.Q[++(jobQ.output)].status = ASSIGNED;
+            currentJob = jobQ.output;
+        }
+        pthread_mutex_unlock(&jobQ_lock); // release queue for other thread to change
+
+
+
+        /*
+         * handle job
+         */
+        if(currentJob != -1)
+        {
+
+            char *txBuf,*rxBuf;
+            int rxCount,txCount;
+            if(((txBuf=(char *)malloc(BUFFER_SIZE))==NULL) || ((rxBuf=(char *)malloc(BUFFER_SIZE))==NULL))
+            {
+                dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
+                exit(1);
+            }
+            //int recv(int sockfd, void *buf, int len, unsigned int flags);
+            //int send(int sockfd, const void *msg, int len, int flags);
+            rxCount = recv(jobQ.Q[currentJob].i_socketId, rxBuf, BUFFER_SIZE, 0);
+            if((!rxCount) || (rxCount==-1)) // connection was lost: socket is closed and job is initialized
+            {
+                if(!rxCount)
+                {
+                    jobQ.Q[currentJob].status = ABORT;
+                    dlog(INFO, "connection was lost, no data received", currentJob);
+                }
+                else
+                {
+                    jobQ.Q[currentJob].status = ERROR;
+                    dlog(WARNING, "no data received(an error occurred). connection will be closed", currentJob);
+                }
+                jobQ.Q[currentJob].status = IDLE;
+                close(jobQ.Q[currentJob].i_socketId);
+                jobQ.Q[currentJob].i_socketId = 0;
+                fflush(stdout);
+                continue;
+            }
+
+            ///TODO: here is where the TFTP state machine should be added
+            rxBuf[rxCount] = '\0';
+            printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
+            fflush(stdout);
+            txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf, strlen(rxBuf), 0); //echo buffer
+            if(txCount==-1)
+
+            /// TODO: make the following line a function that will empty job descriptor for new connection
+            close(jobQ.Q[currentJob].i_socketId);
+            jobQ.Q[currentJob].status = IDLE; //finished handling job,
+
+            free(txBuf);
+            free(rxBuf);
+        }
+        fflush(stdout);
+        if(logFile) fflush(logFile);
+        sleep(1);
+    }
+
 
     return (void *)wid;
 }
@@ -287,7 +365,7 @@ int initNetwork(int *listenSocket, struct sockaddr_in *localAddress)
 
 // free all allocated resources
 // 1. close log file
-void finalize()
+void finalize(int sig_no)
 {
     int i;
     char msg[80]; // general message buffer
@@ -296,7 +374,7 @@ void finalize()
     {
         fclose(logFile);
     }
-
+    kill_thread_flag = 0; //signal thread to stop processing loop
     // collapse worker threads
     for(i = 0 ; i < NUM_OF_SLAVES ; i++)
     {
@@ -307,11 +385,12 @@ void finalize()
             }
             else
             {
-                sprintf(msg,"slave %d joined successfuly.\n",(int)retval);
+                sprintf(msg,"slave %d terminated.\n",(int)retval);
                 dlog(DEBUG, msg, -1);
             }
     }
-
+    sigaction(SIGINT,&osa,NULL); // reset sigaction handler to default
+    kill(0,SIGINT); //kill main process with SIGINT signal
 }
 
 // entry point
@@ -321,7 +400,14 @@ int main(int argc, char *argv[])
     int listenSocket;
     struct sockaddr_in localAddress;
     char msg[400]; //save 5 lines worth of general message buffer
+    struct sigaction sa,osa;  // structures to handle CTRL+C (SIGINT)
     //////////////////////
+
+     // hook finilize() function to the SIGINT event that is triggered by CTRL+C
+     memset(&sa, 0, sizeof(sa));
+     sa.sa_handler = &finalize;
+     sigaction(SIGINT, &sa,&osa);//save the default sigaction structure
+
     /* check to see if a valid port was entered */
     if(argc == 2)
         {
@@ -345,58 +431,40 @@ int main(int argc, char *argv[])
     initNetwork(&listenSocket, &localAddress);
     dlog(DEBUG,"testing dlog...",0);
 
-    /* accept() loop */
 
+
+
+    /* accept() loop */
     while(1)
     {
-        if((jobQ.input < MAX_JOBS) && (jobQ.Q[jobQ.input].i_socketSize == 0))
+        //  only accept connection if queue is not full
+        if(((jobQ.input+1 != jobQ.output) || (jobQ.input-jobQ.output != (MAX_JOBS-1))) && (jobQ.Q[jobQ.input].status == IDLE))
         {
             jobQ.Q[jobQ.input].i_socketSize = sizeof(struct sockaddr_in);
+            // accept incoming connection
             if((jobQ.Q[jobQ.input].i_socketId = accept(listenSocket, (struct sockaddr *)&(jobQ.Q[jobQ.input].sa_address), (socklen_t *)&(jobQ.Q[jobQ.input].i_socketSize))) == -1)
             {
                 dlog(WARNING, "Server-accept() error", -1);
             }
             else
             {
-                sprintf(msg,"Server: Got connection from %s\n", inet_ntoa(jobQ.Q[jobQ.input].sa_address.sin_addr));
+                char *tmp = inet_ntoa(jobQ.Q[jobQ.input].sa_address.sin_addr);
+                strncpy(jobQ.Q[jobQ.input].cp_client , tmp, strlen(tmp));
+                sprintf(msg,"Server: Got connection from %s (socket_id=%d)\n", tmp,jobQ.Q[jobQ.input].i_socketId);
                 dlog(DEBUG,msg,-1);
-                jobQ.input++;
+                pthread_mutex_lock(&jobQ_lock);
+                    jobQ.Q[jobQ.input++].status =  ASSIGNED; // current job as assigned and move pointer to the next position
+                pthread_mutex_unlock(&jobQ_lock);
+                if(jobQ.input == MAX_JOBS) jobQ.input = 0; // cycle queue
             }
         }
     }
-/*     sin_size = sizeof(struct sockaddr_in);
- *     if((new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size)) == -1)
- *     {
- *         perror("Server-accept() error");
- *         continue;
- *     }
- *     else
- *         printf("Server-accept() is OK...\n");
- *     printf("Server-new socket, new_fd is OK...\n");
- *     printf("Server: Got connection from %s\n", inet_ntoa(their_addr.sin_addr));
- ++++++++++++++++++++++++++++++++++++++++++++
- typedef struct _s_jobDescriptor
-{
-    char cp_client[16];//max string is '111.111.111.111\0'
-    char cp_fileName[MAX_STRING+1];
-    Status status; // transaction status
-    unsigned int ui_packets; // number of packets transfered
-    double d_time; // transfer time
-    int i_socketId; // remote socket id
-    struct sockaddr_in sa_address; // remote ip address
-    int i_socketSize; // auxiliry variable to hold the size of the sockaddr structure
-}s_jobDescriptor;
-typedef struct _s_jobQ
-{
-    s_jobDescriptor Q[MAX_JOBS];
-    int input,output;
-}s_jobQ;
- */
 
 
 
 
-    finalize();
+
+    //finalize();
 
     return EXIT_SUCCESS;
 }

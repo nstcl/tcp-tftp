@@ -31,13 +31,16 @@
 #include <errno.h>
 #include <string.h>
 #include <arpa/inet.h>
-
+#include <signal.h>
+#include <unistd.h>
 /************ general defines ****************/
 #define SUCCESS 0
 #define CRITICAL -1
 #define WARNING -2
 #define INFO -3
 #define DEBUG -4
+
+#define BUFFER_SIZE 1024
 /*********************************************/
 /*
  * Trivial File Transfer Protocol (IEN-133) - based on arpa/tftp.h
