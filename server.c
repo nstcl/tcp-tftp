@@ -243,7 +243,7 @@ void *worker(void *id)
             ///TODO: here is where the TFTP state machine should be added
             printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
             fflush(stdout);
-            txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf, strlen(rxBuf), 0); //echo buffer
+            txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf,rxCount , 0); //echo buffer
             //if(txCount==-1)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
