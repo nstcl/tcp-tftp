@@ -1,0 +1,5 @@
+# KDevelop Custom Project File List
+Makefile
+client.c
+server.c
+tftp.h
