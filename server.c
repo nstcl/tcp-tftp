@@ -123,8 +123,8 @@ int initQ(volatile s_jobQ *jq)
     jq->input = 0;
     for (i = 0 ; i < MAX_JOBS ;i++)
     {
-        sprintf(jq->Q[i].cp_fileName, "%s","##EMPTY_FILE##") ;
-        sprintf(jq->Q[i].cp_client, "%s","0.0.0.0") ;
+        sprintf((char *)(jq->Q[i].cp_fileName), "%s","##EMPTY_FILE##") ;
+        sprintf((char *)(jq->Q[i].cp_client), "%s","0.0.0.0") ;
         jq->Q[i].status = IDLE;
         jq->Q[i].ui_packets = 0;
         jq->Q[i].d_time = 0;
@@ -213,7 +213,7 @@ void *worker(void *id)
 
 
 
-            if(((txBuf=(char *)malloc(BUFFER_SIZE))==NULL) || ((rxBuf=(char *)malloc(BUFFER_SIZE))==NULL))
+            if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
             {
                 dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
                 exit(1);
@@ -241,7 +241,6 @@ void *worker(void *id)
             }
 
             ///TODO: here is where the TFTP state machine should be added
-            rxBuf[rxCount] = '\0';
             printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
             fflush(stdout);
             txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf, strlen(rxBuf), 0); //echo buffer
@@ -479,7 +478,7 @@ int main(int argc, char *argv[])
             else
             {
                 char *tmp = inet_ntoa(jobQ.Q[jobQ.input].sa_address.sin_addr);
-                strncpy(jobQ.Q[jobQ.input].cp_client , tmp, strlen(tmp));
+                strncpy((char *)(jobQ.Q[jobQ.input].cp_client) , tmp, strlen(tmp));
                 sprintf(msg,"Server: Got connection from %s (socket_id=%d)\n", tmp,jobQ.Q[jobQ.input].i_socketId);
                 dlog(DEBUG,msg,-1);
                 pthread_mutex_lock(&jobQ_lock);
