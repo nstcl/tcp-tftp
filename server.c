@@ -31,7 +31,8 @@
 #define LOGLEVEL DEBUG
 ////////////////////// data structures ///////////////////////
 /* job definition */
-typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status;
+typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status; // networking statuses
+typedef enum _State {WAIT_STATE, READ_STATE, WRITE_STATE, DATA_STATE, ACK_STATE, ERROR_STATE, CHDIR_STATE, LIST_STATE}State; // states for ftp state machine
 typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
@@ -60,6 +61,7 @@ volatile s_jobQ jobQ; // job queue structure
 pthread_mutex_t jobQ_lock;
 int level = LOGLEVEL;
 char statusStringMap[6][16]={{"IDLE"}, {"ASSIGNED"}, {"TRANSFERING"}, {"FAIL"}, {"ABORT"}, {"DONE"}};
+char ErrorStringMap[7][34]={{"not defined"}, {"file not found"}, {"access violation"}, {"disk full or allocation exceeded"}, {"illegal TFTP operation"}, {"unknown transfer ID"}, {"file already exists"}};
 pthread_t workerThreads[NUM_OF_SLAVES];
 int *workerIds;
 void *retval; // return code for worker threads
@@ -169,6 +171,9 @@ void *worker(void *id)
     int wid = *((int *)id);
     char msg[32];
     sigset_t empty_set;
+    State state = WAIT_STATE;
+    FILE *localFile = NULL, *remoteFile = NULL;
+
     sigemptyset(&empty_set); // create an empty signal mask to reject all signals
     sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
     sprintf(msg,"slave number %d started\n",wid);
@@ -209,9 +214,11 @@ void *worker(void *id)
 
             char *txBuf,*rxBuf;
             int rxCount,txCount;
-
-
-
+	    struct tftphdr *header;
+	    char errorCode = -1;
+	    State state = WAIT_STATE;
+	    DIR *dp;
+	    struct dirent *ep;
 
             if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
             {
@@ -241,7 +248,81 @@ void *worker(void *id)
             }
 
             ///TODO: here is where the TFTP state machine should be added
-            printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
+	    //header.th_opcode = ntohs(*(short *)rxBuf);
+	    //sscanf(rxBuf+2,"%s%s", jobQ.Q[currentJob].cp_fileName,msg);
+	    header = (struct tftphdr *)rxBuf;
+		// states:WAIT,READ,WRITE,DATA,ACK,ERROR,CHDIR,LIST
+		while(state != ACK_STATE)
+		{
+			switch(state)
+			{
+				case WAIT_STATE:
+					switch(header->th_opcode)
+					{
+						case RRQ: 
+							state = READ_STATE; // set next state
+							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+						break;
+						case WRQ: 
+							state = WRITE_STATE; // set next state
+							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+						break;
+						case CD: 
+							state = CHDIR_STATE; // set next state
+							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+						break;
+						case LIST: 
+							state = LIST_STATE; // set next state
+							strcpy(jobQ.Q[currentJob].cp_fileName,".");
+						break;
+					}
+				break;
+				case READ_STATE:
+					if((localFile = fopen(header->th_stuff,"r")) == NULL)
+					{
+						//send error packet
+						state = ERROR_STATE;
+						errorCode = ENOTFOUND;
+					}
+					else
+					{
+						
+					}
+				break;
+				case WRITE_STATE:
+					
+				break;
+				case DATA_STATE:
+					
+				break;
+				case ACK_STATE:
+					
+				break;
+				case ERROR_STATE:
+					
+				break;
+				case CHDIR_STATE:
+					
+				break;
+				case LIST_STATE:	
+					
+					dp = opendir ("./");
+					if (dp != NULL)
+						{
+						while ((ep = readdir (dp)))
+						puts (ep->d_name);
+						(void) closedir (dp);
+						}
+					else
+						perror ("Couldn't open the directory");
+					
+					return 0;
+				break;
+			}
+		}
+	    
+
+	    printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
             fflush(stdout);
             txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf,rxCount , 0); //echo buffer
             //if(txCount==-1)

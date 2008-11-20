@@ -21,7 +21,7 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
-
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -33,19 +33,21 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <unistd.h>
+#include <dirent.h>
+
 /************ general defines ****************/
 #define SUCCESS 0
 #define CRITICAL -1
 #define WARNING -2
 #define INFO -3
 #define DEBUG -4
+#define	SEGSIZE		512		/* data segment size */
 
-#define BUFFER_SIZE 1024
 /*********************************************/
 /*
  * Trivial File Transfer Protocol (IEN-133) - based on arpa/tftp.h
  */
-#define	SEGSIZE		512		/* data segment size */
+
 
 /*
  * Packet types.
@@ -72,6 +74,9 @@ struct	tftphdr {
 #define	th_code		th_u.tu_code
 #define	th_stuff	th_u.tu_stuff
 #define	th_msg		th_data
+
+//#define BUFFER_SIZE 1024
+const unsigned short BUFFER_SIZE = SEGSIZE+sizeof(struct tftphdr);
 
 /*
  * Error codes.
