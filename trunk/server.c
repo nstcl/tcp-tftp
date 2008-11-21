@@ -286,7 +286,17 @@ void *worker(void *id)
 					}
 					else
 					{
-						
+						do{
+						//fread_unlocked
+						fread(rxBuf+sizeof(struct tftphdr), sizeof(char), SEGSIZE, localFile);
+						if(ferror(localFile)) 
+							{
+								state = ERROR_STATE;
+								errorCode = EUNDEF;
+								break;
+							}
+						}while(!feof(localFile)
+						state = ACK_STATE;
 					}
 				break;
 				case WRITE_STATE:
