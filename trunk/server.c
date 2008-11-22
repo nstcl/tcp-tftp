@@ -294,7 +294,7 @@ void *worker(void *id)
 			switch(state)
 			{
 				case WAIT_STATE:
-					switch(header->th_opcode)
+					switch(ntohs(header->th_opcode))
 					{
 						case RRQ: 
 							state = READ_STATE; // set next state
