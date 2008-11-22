@@ -32,7 +32,7 @@
 ////////////////////// data structures ///////////////////////
 /* job definition */
 typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status; // networking statuses
-typedef enum _State {WAIT_STATE, READ_STATE, WRITE_STATE, DATA_STATE, ACK_STATE, ERROR_STATE, CHDIR_STATE, LIST_STATE}State; // states for ftp state machine
+typedef enum _State {WAIT_STATE, READ_STATE, WRITE_STATE, DATA_STATE, ACK_STATE, ERROR_STATE, CHDIR_STATE, LIST_STATE, TERM_STATE}State; // states for ftp state machine
 typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
@@ -94,6 +94,15 @@ void *worker(void *id);
 
 // free all allocated resources
 void finalize(int sig_no);
+
+// send an error message to other side
+int sendError(int sd, char *buffer, int errorCode);
+// send data packet
+// sd - socket descriptor
+// buffer - pointer to data to be sent (assuming data begins at offset 4 leaving space for header)
+// len -length of data
+// isWrite - flags that this is a response to WRQ
+int sendData(int sd,char *buffer, int len,short count, int isWrite);
 /////////////////// funcion implementation /////////////////////////
 /*
  initialize log facility
@@ -158,6 +167,33 @@ int initQ(volatile s_jobQ *jq)
 
 }
 
+//this function handle sending of error packet in case a transaction failure occured
+int sendError(int sd, char *txbuf, int code)
+{
+	// build error message
+	short tmp;
+	tmp = htons(ERROR);
+	memcpy(txbuf, &tmp, 2);
+	tmp = htons(EUNDEF);
+	memcpy(txbuf+2, &tmp, 2);
+	strcpy(txbuf+4,ErrorStringMap[EUNDEF]);
+	return send(sd, txbuf,5+strlen(ErrorStringMap[EUNDEF]) , 0);
+}
+
+//this function is responsible of sending a DATA packet wwich is a 4 byte heaser and 512 bytes of data
+//buffer is ready without the header
+int sendData(int sd,char *buffer, int len,short count, int isWrite)
+{
+	short tmp;
+	tmp = htons(DATA); //opcode
+	memcpy(buffer, &tmp, 2);
+	tmp = isWrite ? 0 : htons(count); //opcode
+	memcpy(buffer+2, &tmp, 2);
+	if (len<SEGSIZE) count=0;
+	//TODO check for error
+	return send(sd, buffer,len+4 , 0);
+}
+
 /* worker function to handle a transfer session: if the server is started then every second
  * the worker shall poll the job queue for a job. if a job is present then the worker shall serve it
  * and shall update the proper queue pointers and job descriptor values.
@@ -171,7 +207,6 @@ void *worker(void *id)
     int wid = *((int *)id);
     char msg[32];
     sigset_t empty_set;
-    State state = WAIT_STATE;
     FILE *localFile = NULL, *remoteFile = NULL;
 
     sigemptyset(&empty_set); // create an empty signal mask to reject all signals
@@ -219,7 +254,9 @@ void *worker(void *id)
 	    State state = WAIT_STATE;
 	    DIR *dp;
 	    struct dirent *ep;
-
+	    short count;
+	    short tmp;
+	    
             if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
             {
                 dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
@@ -252,7 +289,7 @@ void *worker(void *id)
 	    //sscanf(rxBuf+2,"%s%s", jobQ.Q[currentJob].cp_fileName,msg);
 	    header = (struct tftphdr *)rxBuf;
 		// states:WAIT,READ,WRITE,DATA,ACK,ERROR,CHDIR,LIST
-		while(state != ACK_STATE)
+		while(state != TERM_STATE)
 		{
 			switch(state)
 			{
@@ -262,10 +299,12 @@ void *worker(void *id)
 						case RRQ: 
 							state = READ_STATE; // set next state
 							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+							count = 0;
 						break;
 						case WRQ: 
 							state = WRITE_STATE; // set next state
 							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+							count = 0;
 						break;
 						case CD: 
 							state = CHDIR_STATE; // set next state
@@ -286,30 +325,86 @@ void *worker(void *id)
 					}
 					else
 					{
-						do{
-						//fread_unlocked
-						fread(rxBuf+sizeof(struct tftphdr), sizeof(char), SEGSIZE, localFile);
-						if(ferror(localFile)) 
-							{
-								state = ERROR_STATE;
-								errorCode = EUNDEF;
-								break;
-							}
-						}while(!feof(localFile)
-						state = ACK_STATE;
+						state = DATA_STATE;
 					}
 				break;
 				case WRITE_STATE:
-					
+					if((remoteFile = fopen(header->th_stuff,"w")) == NULL)
+					{
+						//send error packet
+						state = ERROR_STATE;
+						errorCode = EACCESS;
+					}
+					else
+					{
+						state = ACK_STATE;
+					}
 				break;
 				case DATA_STATE:
 					
+					if(localFile) // this means we opened the file for read so we know we got a RRQ
+					{
+						//fread_unlocked
+						txCount = fread(txBuf+4, sizeof(char), SEGSIZE, localFile);
+						if(feof(localFile))
+						{
+							fclose(localFile);
+							state = TERM_STATE;
+						}
+						else
+						if(ferror(localFile))
+						{
+							fclose(localFile);
+							state = ERROR_STATE;
+							errorCode = EUNDEF;
+							//TODO log message on fail
+							sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+							dlog(CRITICAL,"file read error",-1);
+							break;
+						}
+						else 
+						if(!sendData(jobQ.Q[currentJob].i_socketId, txBuf, txCount, ++count, 0))
+						{
+							dlog(CRITICAL, "couldn't send Data!", -1);
+							state = ERROR_STATE;
+						}
+						else state = ACK_STATE;
+					}
+					else if(remoteFile) // this means we opened the file for write so we know we got a WRQ
+					{
+						rxCount = recv(jobQ.Q[currentJob].i_socketId,rxBuf,4+SEGSIZE,0);
+						//TODO check for errors
+						if((((struct tftphdr *)rxBuf)->th_opcode==DATA) && (((struct tftphdr *)rxBuf)->th_block==count))
+						{
+							fwrite(rxBuf+sizeof(struct tftphdr), sizeof(char), rxCount, remoteFile);
+							count++;
+						}
+						if(rxCount<SEGSIZE) state = TERM_STATE;
+						else state = ACK_STATE;
+					}	
+					
 				break;
 				case ACK_STATE:
+					//TODO: build and send ack packet + handle errors
 					
+					tmp = htons(ACK);
+					memcpy(txBuf,&tmp, sizeof(tmp));
+					tmp = htons(count);
+					memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
+					txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
+					state = DATA_STATE;
 				break;
 				case ERROR_STATE:
-					
+					dlog(INFO, "Transfer Error!", currentJob);
+					sprintf((char *)(jobQ.Q[currentJob].cp_fileName), "%s","##EMPTY_FILE##") ;
+					sprintf((char *)(jobQ.Q[currentJob].cp_client), "%s","0.0.0.0") ;
+					jobQ.Q[currentJob].status = IDLE;
+					jobQ.Q[currentJob].ui_packets = 0;
+					jobQ.Q[currentJob].d_time = 0;
+					close(jobQ.Q[currentJob].i_socketId);
+					jobQ.Q[currentJob].i_socketId = 0;
+					jobQ.Q[currentJob].i_socketSize = 0;
+					jobQ.Q[currentJob].i_slave = -1;
 				break;
 				case CHDIR_STATE:
 					
@@ -327,6 +422,8 @@ void *worker(void *id)
 						perror ("Couldn't open the directory");
 					
 					return 0;
+				break;
+				default:
 				break;
 			}
 		}
