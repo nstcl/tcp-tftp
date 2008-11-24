@@ -1,0 +1,5 @@
+D:\playground\tcpTftpClientDotNet\bin\Debug\tcpTftpClientDotNet.exe
+D:\playground\tcpTftpClientDotNet\bin\Debug\tcpTftpClientDotNet.pdb
+D:\playground\tcpTftpClientDotNet\obj\Debug\ResolveAssemblyReference.cache
+D:\playground\tcpTftpClientDotNet\obj\Debug\tcpTftpClientDotNet.exe
+D:\playground\tcpTftpClientDotNet\obj\Debug\tcpTftpClientDotNet.pdb
