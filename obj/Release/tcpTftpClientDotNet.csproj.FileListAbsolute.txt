@@ -1,5 +1,0 @@
-D:\playground\tcpTftpClientDotNet\obj\Release\ResolveAssemblyReference.cache
-D:\playground\tcpTftpClientDotNet\bin\Release\tcpTftpClientDotNet.exe
-D:\playground\tcpTftpClientDotNet\bin\Release\tcpTftpClientDotNet.pdb
-D:\playground\tcpTftpClientDotNet\obj\Release\tcpTftpClientDotNet.exe
-D:\playground\tcpTftpClientDotNet\obj\Release\tcpTftpClientDotNet.pdb
