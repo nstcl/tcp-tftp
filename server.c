@@ -53,7 +53,7 @@ typedef struct _s_jobQ
 }s_jobQ;
 
 /////////////////// globals /////////////////////////
-volatile char gScwd[NUM_OF_SLAVES][MAX_STRING+1] = {{"/tmp"},{"/tmp"}};
+volatile char gScwd[NUM_OF_SLAVES][MAX_STRING+1] = {{"/tmp"},{"/tmp"}}; // array to save thread working directory
 pthread_mutex_t gScwd_lock;
 FILE *logFile = NULL;
 ushort us_port = DEFAULT_SERVER_PORT;
@@ -203,7 +203,7 @@ int sendData(int sd,char *buffer, int len,short count, int isWrite)
  ///TODO when transfer ends initialize job descriptor for reuse
 void *worker(void *id)
 {
-
+    
     int wid = *((int *)id);
     char msg[32];
     sigset_t empty_set;
@@ -257,6 +257,12 @@ void *worker(void *id)
 	    short count;
 	    short tmp;
 	    
+	    // change directory to the assigned thread directory
+	    pthread_mutex_lock(&gScwd_lock);
+	    chdir((char *)(gScwd[currentJob]));
+	    pthread_mutex_unlock(&gScwd_lock);
+	    
+	    
             if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
             {
                 dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
@@ -283,10 +289,7 @@ void *worker(void *id)
                 fflush(stdout);
                 continue;
             }
-
-            ///TODO: here is where the TFTP state machine should be added
-	    //header.th_opcode = ntohs(*(short *)rxBuf);
-	    //sscanf(rxBuf+2,"%s%s", jobQ.Q[currentJob].cp_fileName,msg);
+	/*Extract header information from received buffer*/
 	    header = (struct tftphdr *)rxBuf;
 		// states:WAIT,READ,WRITE,DATA,ACK,ERROR,CHDIR,LIST
 		while(state != TERM_STATE)
@@ -298,21 +301,29 @@ void *worker(void *id)
 					{
 						case RRQ: 
 							state = READ_STATE; // set next state
-							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+							pthread_mutex_lock( &jobQ_lock);
+							strcpy((char *)(jobQ.Q[currentJob].cp_fileName),header->th_stuff);
+							pthread_mutex_unlock( &jobQ_lock);
 							count = 0;
 						break;
 						case WRQ: 
 							state = WRITE_STATE; // set next state
-							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+							pthread_mutex_lock( &jobQ_lock);
+							strcpy((char *)(jobQ.Q[currentJob].cp_fileName),header->th_stuff);
+							pthread_mutex_unlock( &jobQ_lock);
 							count = 0;
 						break;
 						case CD: 
 							state = CHDIR_STATE; // set next state
-							strcpy(jobQ.Q[currentJob].cp_fileName,header->th_stuff);
+							pthread_mutex_lock( &jobQ_lock);
+							strcpy((char *)(jobQ.Q[currentJob].cp_fileName),header->th_stuff);
+							pthread_mutex_unlock( &jobQ_lock);
 						break;
 						case LIST: 
 							state = LIST_STATE; // set next state
-							strcpy(jobQ.Q[currentJob].cp_fileName,".");
+							pthread_mutex_lock( &jobQ_lock);
+							strcpy((char *)(jobQ.Q[currentJob].cp_fileName),".");
+							pthread_mutex_unlock( &jobQ_lock);
 						break;
 					}
 				break;
