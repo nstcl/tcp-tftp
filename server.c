@@ -254,13 +254,10 @@ void *worker(void *id)
 	    State state = WAIT_STATE;
 	    DIR *dp;
 	    struct dirent *ep;
-	    short count;
+	    short count = 0;
 	    short tmp;
 	    
-	    // change directory to the assigned thread directory
-	    pthread_mutex_lock(&gScwd_lock);
-	    chdir((char *)(gScwd[currentJob]));
-	    pthread_mutex_unlock(&gScwd_lock);
+	    
 	    
 	    
             if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
@@ -328,6 +325,10 @@ void *worker(void *id)
 					}
 				break;
 				case READ_STATE:
+					// change directory to the assigned thread directory
+					pthread_mutex_lock(&gScwd_lock);
+					chdir((char *)(gScwd[currentJob]));
+					pthread_mutex_unlock(&gScwd_lock);
 					if((localFile = fopen(header->th_stuff,"r")) == NULL)
 					{
 						//send error packet
@@ -340,6 +341,10 @@ void *worker(void *id)
 					}
 				break;
 				case WRITE_STATE:
+					// change directory to the assigned thread directory
+					pthread_mutex_lock(&gScwd_lock);
+					chdir((char *)(gScwd[currentJob]));
+					pthread_mutex_unlock(&gScwd_lock);
 					if((remoteFile = fopen(header->th_stuff,"w")) == NULL)
 					{
 						//send error packet
@@ -379,13 +384,13 @@ void *worker(void *id)
 							dlog(CRITICAL, "couldn't send Data!", -1);
 							state = ERROR_STATE;
 						}
-						else state = ACK_STATE;
+						else {state = DATA_STATE;}
 					}
 					else if(remoteFile) // this means we opened the file for write so we know we got a WRQ
 					{
 						rxCount = recv(jobQ.Q[currentJob].i_socketId,rxBuf,4+SEGSIZE,0);
 						//TODO check for errors
-						if((((struct tftphdr *)rxBuf)->th_opcode==DATA) && (((struct tftphdr *)rxBuf)->th_block==count))
+						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==DATA) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count))
 						{
 							fwrite(rxBuf+sizeof(struct tftphdr), sizeof(char), rxCount, remoteFile);
 							count++;
@@ -396,15 +401,17 @@ void *worker(void *id)
 					
 				break;
 				case ACK_STATE:
-					//TODO: build and send ack packet + handle errors
+					//TODO: handle errors
 					
-					tmp = htons(ACK);
-					memcpy(txBuf,&tmp, sizeof(tmp));
-					tmp = htons(count);
-					memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
-					txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
-					state = DATA_STATE;
+						tmp = htons(ACK);
+						memcpy(txBuf,&tmp, sizeof(tmp));
+						tmp = htons(count);
+						memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
+						txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
+						state = DATA_STATE;
+					
 				break;
+				///TODO: consider adding an error code to make the error message more meaningful
 				case ERROR_STATE:
 					dlog(INFO, "Transfer Error!", currentJob);
 					sprintf((char *)(jobQ.Q[currentJob].cp_fileName), "%s","##EMPTY_FILE##") ;
@@ -416,6 +423,7 @@ void *worker(void *id)
 					jobQ.Q[currentJob].i_socketId = 0;
 					jobQ.Q[currentJob].i_socketSize = 0;
 					jobQ.Q[currentJob].i_slave = -1;
+					state = TERM_STATE;
 				break;
 				case CHDIR_STATE:
 					
