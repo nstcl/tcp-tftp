@@ -362,23 +362,21 @@ void *worker(void *id)
 					{
 						//fread_unlocked
 						txCount = fread(txBuf+4, sizeof(char), SEGSIZE, localFile);
-						if(feof(localFile))
+						if(txCount<SEGSIZE)
 						{
 							fclose(localFile);
 							state = TERM_STATE;
-						}
-						else
-						if(ferror(localFile))
-						{
-							fclose(localFile);
-							state = ERROR_STATE;
-							errorCode = EUNDEF;
-							//TODO log message on fail
-							sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
-							dlog(CRITICAL,"file read error",-1);
-							break;
-						}
-						else 
+						
+							if(ferror(localFile))
+							{
+								state = ERROR_STATE;
+								errorCode = EUNDEF;
+								//TODO log message on fail
+								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+								dlog(CRITICAL,"file read error",-1);
+								break;
+							}
+						} 
 						if(!sendData(jobQ.Q[currentJob].i_socketId, txBuf, txCount, ++count, 0))
 						{
 							dlog(CRITICAL, "couldn't send Data!", -1);
