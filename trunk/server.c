@@ -369,7 +369,7 @@ void *worker(void *id)
 								state = ERROR_STATE;
 								errorCode = EUNDEF;
 								char *m=malloc(80);
-								dlog(CRITICAL,strerror_r(errno,m,80),-1);
+								dlog(CRITICAL,(char *)strerror_r(errno,m,80),-1);
 								free(m);
 								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
 							}
@@ -406,7 +406,7 @@ void *worker(void *id)
 								state = ERROR_STATE;
 								errorCode = EUNDEF;
 								char *m=malloc(80);
-								dlog(CRITICAL,strerror_r(errno,m,80),-1);
+								dlog(CRITICAL,(char *)strerror_r(errno,m,80),-1);
 								free(m);
 								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
 							}
@@ -605,7 +605,7 @@ int initNetwork(int *listenSocket, struct sockaddr_in *localAddress)
     /* bind to socket */
     if(bind(*listenSocket, (struct sockaddr *)localAddress, sizeof(struct sockaddr)) == -1)
     {
-        dlog(CRITICAL, "Server-bind() error", -1);
+	dlog(CRITICAL, "Server-bind() error", -1);
         exit(1);
     }
     else
@@ -707,7 +707,7 @@ int main(int argc, char *argv[])
     while(1)
     {
         //  only accept connection if queue is not full
-        if(((jobQ.input+1 != jobQ.output) && (jobQ.input-jobQ.output != (MAX_JOBS-1))) && (jobQ.Q[jobQ.input].status == IDLE))
+        if(((jobQ.input+1 != jobQ.output) || (jobQ.input-jobQ.output != (MAX_JOBS-1))) && (jobQ.Q[jobQ.input].status == IDLE))
         {
             jobQ.Q[jobQ.input].i_socketSize = sizeof(struct sockaddr_in);
             // accept incoming connection
@@ -724,7 +724,14 @@ int main(int argc, char *argv[])
                 pthread_mutex_lock(&jobQ_lock);
                     if(jobQ.input == MAX_JOBS) jobQ.input = 0; // cycle queue
                     jobQ.Q[jobQ.input].status =  ASSIGNED; // current job as assigned and move pointer to the next position
-                    jobQ.input++;
+		    if(jobQ.input == MAX_JOBS-1)
+		    {
+			    jobQ.input=0;
+		    }
+		    else
+		    {
+			    jobQ.input++;
+		    }
                 pthread_mutex_unlock(&jobQ_lock);
 
             }
