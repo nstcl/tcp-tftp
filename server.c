@@ -265,8 +265,7 @@ void *worker(void *id)
                 dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
                 exit(1);
             }
-            //int recv(int sockfd, void *buf, int len, unsigned int flags);
-            //int send(int sockfd, const void *msg, int len, int flags);
+           /// get request from client, close connection on error
             rxCount = recv(jobQ.Q[currentJob].i_socketId, rxBuf, BUFFER_SIZE, 0);
             if((!rxCount) || (rxCount==-1)) // connection was lost: socket is closed and job is initialized
             {
@@ -364,25 +363,36 @@ void *worker(void *id)
 						txCount = fread(txBuf+4, sizeof(char), SEGSIZE, localFile);
 						if(txCount<SEGSIZE)
 						{
-							fclose(localFile);
-							state = TERM_STATE;
-						
-							if(ferror(localFile))
+							///check if an error occured which is not a normal EOF
+							if(ferror(localFile) && !feof(localFile)) 
 							{
 								state = ERROR_STATE;
 								errorCode = EUNDEF;
-								//TODO log message on fail
+								char *m=malloc(80);
+								dlog(CRITICAL,strerror_r(errno,m,80),-1);
+								free(m);
 								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
-								dlog(CRITICAL,"file read error",-1);
-								break;
 							}
+							fclose(localFile);
+							localFile = NULL;
+							pthread_mutex_lock(&jobQ_lock);
+							jobQ.Q[currentJob].status = DONE;
+							pthread_mutex_unlock(&jobQ_lock);
+							status = DONE;
+							state = TERM_STATE;
+							dlog(INFO, "Finished sending file, report to follow:", currentJob);
 						} 
+						
 						if(!sendData(jobQ.Q[currentJob].i_socketId, txBuf, txCount, ++count, 0))
 						{
 							dlog(CRITICAL, "couldn't send Data!", -1);
 							state = ERROR_STATE;
 						}
-						else {state = DATA_STATE;}
+						else 
+						if(state != TERM_STATE)
+						{
+							state = DATA_STATE;
+						}
 					}
 					else if(remoteFile) // this means we opened the file for write so we know we got a WRQ
 					{
@@ -391,10 +401,27 @@ void *worker(void *id)
 						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==DATA) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count))
 						{
 							fwrite(rxBuf+sizeof(struct tftphdr), sizeof(char), rxCount, remoteFile);
+							if(ferror(remoteFile))
+							{
+								state = ERROR_STATE;
+								errorCode = EUNDEF;
+								char *m=malloc(80);
+								dlog(CRITICAL,strerror_r(errno,m,80),-1);
+								free(m);
+								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+							}
 							count++;
 						}
-						if(rxCount<SEGSIZE) state = TERM_STATE;
-						else state = ACK_STATE;
+						if(rxCount<SEGSIZE) 
+						{
+							state = TERM_STATE;
+							fclose(remoteFile);
+							remoteFile = NULL;
+						}
+						else 
+						{
+							state = ACK_STATE;
+						}
 					}	
 					
 				break;
@@ -412,6 +439,7 @@ void *worker(void *id)
 				///TODO: consider adding an error code to make the error message more meaningful
 				case ERROR_STATE:
 					dlog(INFO, "Transfer Error!", currentJob);
+					pthread_mutex_lock(&jobQ_lock);
 					sprintf((char *)(jobQ.Q[currentJob].cp_fileName), "%s","##EMPTY_FILE##") ;
 					sprintf((char *)(jobQ.Q[currentJob].cp_client), "%s","0.0.0.0") ;
 					jobQ.Q[currentJob].status = IDLE;
@@ -421,6 +449,7 @@ void *worker(void *id)
 					jobQ.Q[currentJob].i_socketId = 0;
 					jobQ.Q[currentJob].i_socketSize = 0;
 					jobQ.Q[currentJob].i_slave = -1;
+					pthread_mutex_unlock(&jobQ_lock);
 					state = TERM_STATE;
 				break;
 				case CHDIR_STATE:
@@ -444,19 +473,25 @@ void *worker(void *id)
 				break;
 			}
 		}
+		
 	    
 
-	    printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
-            fflush(stdout);
-            txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf,rxCount , 0); //echo buffer
+// 	    printf("Received from %s:%s\n", jobQ.Q[currentJob].cp_client, rxBuf);
+//             fflush(stdout);
+//             txCount = send(jobQ.Q[currentJob].i_socketId, rxBuf,rxCount , 0); //echo buffer
             //if(txCount==-1)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
             //close(jobQ.Q[currentJob].i_socketId);
             //jobQ.Q[currentJob].status = IDLE; //finished handling job,
-
-            free(txBuf);
-            free(rxBuf);
+	    pthread_mutex_lock(&jobQ_lock);
+	    jobQ.Q[currentJob].status = IDLE;
+	    close(jobQ.Q[currentJob].i_socketId);
+	    pthread_mutex_unlock(&jobQ_lock);
+	    status = IDLE;
+	    //dlog(INFO, "Moving to next Job",-1);
+            if (txBuf) free(txBuf);
+            if (rxBuf) free(rxBuf);
         }
         fflush(stdout);
         if(logFile) fflush(logFile);
