@@ -401,7 +401,7 @@ void *worker(void *id)
 						//TODO check for errors
 						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==DATA) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count+1))
 						{
-							fwrite(rxBuf+4, sizeof(char), rxCount, remoteFile);
+							fwrite(rxBuf+4, sizeof(char), rxCount-4, remoteFile);
 							if(ferror(remoteFile))
 							{
 								state = ERROR_STATE;
