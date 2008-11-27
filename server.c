@@ -27,6 +27,7 @@
 #define DEFAULT_SERVER_PORT 5069
 #define NUM_OF_SLAVES 2
 #define LOGFILE "./server.log"
+#define DEFAULT_DIR "/tmp"
 #define MAX_JOBS BACKLOG
 #define LOGLEVEL DEBUG
 ////////////////////// data structures ///////////////////////
@@ -53,7 +54,7 @@ typedef struct _s_jobQ
 }s_jobQ;
 
 /////////////////// globals /////////////////////////
-volatile char gScwd[NUM_OF_SLAVES][MAX_STRING+1] = {{"/tmp"},{"/tmp"}}; // array to save thread working directory
+volatile char gScwd[NUM_OF_SLAVES][MAX_STRING+1] = {{DEFAULT_DIR},{DEFAULT_DIR}}; // array to save thread working directory
 pthread_mutex_t gScwd_lock;
 FILE *logFile = NULL;
 ushort us_port = DEFAULT_SERVER_PORT;
@@ -398,9 +399,9 @@ void *worker(void *id)
 					{
 						rxCount = recv(jobQ.Q[currentJob].i_socketId,rxBuf,4+SEGSIZE,0);
 						//TODO check for errors
-						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==DATA) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count))
+						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==DATA) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count+1))
 						{
-							fwrite(rxBuf+sizeof(struct tftphdr), sizeof(char), rxCount, remoteFile);
+							fwrite(rxBuf+4, sizeof(char), rxCount, remoteFile);
 							if(ferror(remoteFile))
 							{
 								state = ERROR_STATE;
@@ -414,9 +415,16 @@ void *worker(void *id)
 						}
 						if(rxCount<SEGSIZE) 
 						{
-							state = TERM_STATE;
+							
+							fflush(remoteFile);
 							fclose(remoteFile);
 							remoteFile = NULL;
+							pthread_mutex_lock(&jobQ_lock);
+							jobQ.Q[currentJob].status = DONE;
+							pthread_mutex_unlock(&jobQ_lock);
+							status = DONE;
+							dlog(INFO, "Finished receiving file, report to follow:", currentJob);
+							state = TERM_STATE;
 						}
 						else 
 						{
@@ -482,12 +490,14 @@ void *worker(void *id)
             //if(txCount==-1)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
-            //close(jobQ.Q[currentJob].i_socketId);
-            //jobQ.Q[currentJob].status = IDLE; //finished handling job,
+            /// Finalize current job
 	    pthread_mutex_lock(&jobQ_lock);
 	    jobQ.Q[currentJob].status = IDLE;
 	    close(jobQ.Q[currentJob].i_socketId);
 	    pthread_mutex_unlock(&jobQ_lock);
+	    pthread_mutex_lock(&gScwd_lock);
+	    chdir((char *)(DEFAULT_DIR));
+	    pthread_mutex_unlock(&gScwd_lock);
 	    status = IDLE;
 	    //dlog(INFO, "Moving to next Job",-1);
             if (txBuf) free(txBuf);
