@@ -183,7 +183,10 @@ namespace tcpTftpClientDotNet
             //sendTftpPacket(Client.OP_CODE.ACK, string.Empty, null, blockNumber);//final ACK
             return txCount;
         }
-
+        public void Close()
+        {
+            sendTftpPacket(OP_CODE.CLOSE, "", null, -1);
+        }
         ~Client()
         {
             s.Close(1);
