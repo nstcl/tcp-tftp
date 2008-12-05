@@ -409,7 +409,7 @@ void *worker(void *id)
 							pthread_mutex_lock(&jobQ_lock);
 							jobQ.Q[currentJob].status = DONE;
 							jobQ.Q[currentJob].ui_packets = count+1;
-							jobQ.Q[currentJob].d_time = (endTime.tv_usec - startTime.tv_usec)/1000000.0;
+							jobQ.Q[currentJob].d_time = (endTime.tv_sec - startTime.tv_sec)+(endTime.tv_usec - startTime.tv_usec)/1000000.0;
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
 							state = WAIT_STATE;
