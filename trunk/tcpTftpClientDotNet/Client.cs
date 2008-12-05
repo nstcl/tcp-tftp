@@ -4,13 +4,15 @@ using System.Linq;
 using System.Text;
 using System.Net;
 using System.Net.Sockets;
+using System.IO;
+
 namespace tcpTftpClientDotNet
 {
     class Client
     {
         Socket s;
         NetworkStream ns;
-        public enum OP_CODE:short{RRQ=1,WRQ=2,CD=6,LIST=7,ACK=4,DATA=3,ERROR=5}
+        public enum OP_CODE:short{RRQ=1,WRQ=2,CD=6,LIST=7,ACK=4,DATA=3,ERROR=5, CLOSE=8}
         public Client(string address, int port)
         {
             s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -71,6 +73,16 @@ namespace tcpTftpClientDotNet
                         Buffer.BlockCopy(blockAck, 0, txBuffer, b_op.Length, sizeof(short));
                         s.Send(txBuffer);
                     }
+                    break;
+                case OP_CODE.CLOSE:
+
+                        txBuffer = new byte[4];
+                        b_op = BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)OP_CODE.ACK));
+                        Buffer.BlockCopy(b_op, 0, txBuffer, 0, b_op.Length);
+                        //byte[] closeBuf = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(blockNumber));
+                        //Buffer.BlockCopy(closeBuf, 0, txBuffer, b_op.Length, sizeof(short));
+                        txBuffer[2] = 0x55; txBuffer[3] = 0x55;
+                        s.Send(txBuffer);
                     break;
                 case OP_CODE.DATA:
                     txBuffer = new byte[4+data.Length];
@@ -138,6 +150,38 @@ namespace tcpTftpClientDotNet
 
                 sendTftpPacket(Client.OP_CODE.DATA, string.Empty, data, ++blockNumber);
             } while ((dataLength=sr.ReadBlock(chunk, 0, 512)) == 512);
+            //sendTftpPacket(Client.OP_CODE.ACK, string.Empty, null, blockNumber);//final ACK
+            return txCount;
+        }
+
+        public int PutBinaryFile(string filename)
+        {
+            byte[] txBuf = new byte[516];
+            byte[] data;
+            int txCount;
+            string s = System.IO.File.ReadAllText(filename);
+            System.IO.StringReader sr = new System.IO.StringReader(s);
+            FileStream fs = new FileStream(filename, FileMode.Open);
+            BinaryReader br = new BinaryReader(fs);
+            short blockNumber;
+            ASCIIEncoding ae = new ASCIIEncoding();
+            sendTftpPacket(Client.OP_CODE.WRQ, filename, null, -1);//send WRQ
+            //char[] chunk = new char[512];
+            //int dataLength = sr.ReadBlock(chunk, 0, 512);
+            do
+            {
+                txCount = recvTftpPacket(ref txBuf);
+                OP_CODE op = (OP_CODE)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(txBuf, 0));
+                System.Diagnostics.Debug.Assert(op == OP_CODE.ACK);
+                blockNumber = IPAddress.NetworkToHostOrder(BitConverter.ToInt16(txBuf, 2));
+                //s += new string(ae.GetChars(rxBuf, sizeof(short) * 2, rxCount - 4 >= 4 ? rxCount - 4 : 0)); 
+                data = br.ReadBytes(512);
+                //int chrCount, byteCount;
+                //bool completed;
+                //ae.GetEncoder().Convert(chunk, 0, dataLength, data, 0, data.Length, true, out chrCount, out byteCount, out completed);
+
+                sendTftpPacket(Client.OP_CODE.DATA, string.Empty, data, ++blockNumber);
+            } while (data.Length == 512);
             //sendTftpPacket(Client.OP_CODE.ACK, string.Empty, null, blockNumber);//final ACK
             return txCount;
         }
