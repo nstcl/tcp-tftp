@@ -52,14 +52,14 @@
 /*
  * Packet types.
  */
-#define	RRQ	    01				/* read request */
-#define	WRQ	    02				/* write request */
-#define	DATA	03				/* data packet */
-#define	ACK	    04				/* acknowledgement */
-#define	ERROR	05				/* error code */
-#define LIST    06              /* ls request */
-#define CD      07              /* cd request */
-
+#define	RRQ	    0x1				/* read request */
+#define	WRQ	    0x2				/* write request */
+#define	DATA	0x3				/* data packet */
+#define	ACK	    0x4				/* acknowledgement */
+#define	ERROR	0x5				/* error code */
+#define LIST    0x6              /* ls request */
+#define CD      0x7              /* cd request */
+#define CLOSE	0x8		/* close session request */
 struct	tftphdr {
 	short	th_opcode;			/* packet type */
 	union {
