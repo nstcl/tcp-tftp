@@ -21,6 +21,7 @@
 #ifdef SERVER_BUILD
 #include "tftp.h"
 #include <pthread.h>
+
 ////////////////// defines ////////////////
 #define MAX_STRING 255
 #define BACKLOG 5
@@ -30,6 +31,8 @@
 #define DEFAULT_DIR "/tmp"
 #define MAX_JOBS BACKLOG
 #define LOGLEVEL DEBUG
+#define TRUE 1
+#define FALSE 0
 ////////////////////// data structures ///////////////////////
 /* job definition */
 typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status; // networking statuses
@@ -216,23 +219,26 @@ void *worker(void *id)
 	State state = WAIT_STATE;
 	DIR *dp;
 	struct dirent *ep;
+	char dirListing[255][80];
 	short count = 0;
 	short tmp;
     	Status status = IDLE;
     	int currentJob = -10, assignedSlave = -10;
-    
-    
-    sigemptyset(&empty_set); // create an empty signal mask to reject all signals
-    sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
-    sprintf(msg,"slave number %d started\n",wid);
-    dlog(DEBUG,msg,-1);
+    	int inSession = FALSE;
+	struct timeval startTime,endTime;
+	struct stat st;
+	
+	sigemptyset(&empty_set); // create an empty signal mask to reject all signals
+	sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
+	sprintf(msg,"slave number %d started\n",wid);
+	dlog(DEBUG,msg,-1);
 	
     while(kill_thread_flag)
     {
         //printf("%d",wid);
         
         
-	if(status != TRANSFERING)
+	    if(currentJob == -10)
 	{
 		pthread_mutex_lock(&jobQ_lock); // protect queue pointer
 		if(jobQ.output == MAX_JOBS-1) jobQ.output = -1; // cycle queue output index
@@ -245,19 +251,22 @@ void *worker(void *id)
 		//also save the status in a non volatile var
 		if(jobQ.Q[jobQ.output].status==TRANSFERING)
 		{
-		currentJob = jobQ.output;
-		status = TRANSFERING;
+			currentJob = jobQ.output;
+			status = TRANSFERING;
+			inSession = TRUE;
 		}
 		assignedSlave = jobQ.Q[jobQ.output].i_slave;
 		pthread_mutex_unlock(&jobQ_lock); // release queue for other thread to change
+		
 	}
 
-
+	if(!inSession) continue;
 
         /*
          * handle job
          */
-
+	if(status==DONE) status = TRANSFERING; //get ready for a new command
+	
         if((status == TRANSFERING) && (assignedSlave == wid))
         {
 
@@ -274,17 +283,19 @@ void *worker(void *id)
                 if(!rxCount)
                 {
                     jobQ.Q[currentJob].status = ABORT;
-                    dlog(INFO, "connection was lost, no data received", currentJob);
+                    dlog(INFO, "connection was lost, no data received", -1);
                 }
                 else
                 {
                     jobQ.Q[currentJob].status = ERROR;
-                    dlog(WARNING, "no data received(an error occurred). connection will be closed", currentJob);
+                    dlog(WARNING, "no data received(an error occurred). connection will be closed", -1);
                 }
                 jobQ.Q[currentJob].status = IDLE;
                 close(jobQ.Q[currentJob].i_socketId);
                 jobQ.Q[currentJob].i_socketId = 0;
                 fflush(stdout);
+		currentJob = -10;
+		inSession = FALSE;
                 continue;
             }
 	/*Extract header information from received buffer*/
@@ -336,7 +347,9 @@ void *worker(void *id)
 							if (txBuf) free(txBuf);
 							if (rxBuf) free(rxBuf);
 							state = TERM_STATE;
-							
+							currentJob = -10;
+							assignedSlave = -10;
+							inSession = FALSE;
 						break;
 					}
 				break;
@@ -373,7 +386,7 @@ void *worker(void *id)
 					}
 				break;
 				case DATA_STATE:
-					
+					gettimeofday(&startTime,NULL);
 					if(localFile) // this means we opened the file for read so we know we got a RRQ
 					{
 						//fread_unlocked
@@ -392,11 +405,15 @@ void *worker(void *id)
 							}
 							fclose(localFile);
 							localFile = NULL;
+							gettimeofday(&endTime,NULL);
 							pthread_mutex_lock(&jobQ_lock);
 							jobQ.Q[currentJob].status = DONE;
+							jobQ.Q[currentJob].ui_packets = count+1;
+							jobQ.Q[currentJob].d_time = (endTime.tv_usec - startTime.tv_usec)/1000000.0;
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
 							state = WAIT_STATE;
+							
 							dlog(INFO, "Finished sending file, report to follow:", currentJob);
 						} 
 						
@@ -426,6 +443,7 @@ void *worker(void *id)
 								dlog(CRITICAL,(char *)strerror_r(errno,m,80),-1);
 								free(m);
 								sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+								break;
 							}
 							count++;
 						}
@@ -435,8 +453,11 @@ void *worker(void *id)
 							fflush(remoteFile);
 							fclose(remoteFile);
 							remoteFile = NULL;
+							gettimeofday(&endTime,NULL);
 							pthread_mutex_lock(&jobQ_lock);
 							jobQ.Q[currentJob].status = DONE;
+							jobQ.Q[currentJob].ui_packets = count;
+							jobQ.Q[currentJob].d_time = (endTime.tv_sec - startTime.tv_sec)+(endTime.tv_usec - startTime.tv_usec)/1000000.0;
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
 							dlog(INFO, "Finished receiving file, report to follow:", currentJob);
@@ -478,6 +499,29 @@ void *worker(void *id)
 				break;
 				case CHDIR_STATE:
 					
+					if(stat("/tmp",&st) == 0)
+					pthread_mutex_lock( &jobQ_lock);
+					if(stat(jobQ.Q[currentJob].cp_fileName,&st) == 0)
+					{
+						chdir(jobQ.Q[currentJob].cp_fileName);
+						tmp = htons(ACK);
+						memcpy(txBuf,&tmp, sizeof(tmp));
+						tmp = htons(count);
+						memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
+						txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
+						status = DONE;
+						state = WAIT_STATE;
+					}
+					else
+					{
+						state = ERROR_STATE;
+						errorCode = ENOTFOUND;
+						char *m=malloc(80);
+						dlog(CRITICAL,(char *)strerror_r(errno,m,80),-1);
+						free(m);
+						sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+					}
+					pthread_mutex_unlock( &jobQ_lock);
 				break;
 				case LIST_STATE:	
 					
@@ -507,7 +551,7 @@ void *worker(void *id)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
             /// Finalize current job
-	    status = TRANSFERING;
+	    
 // 	    pthread_mutex_lock(&jobQ_lock);
 // 	    jobQ.Q[currentJob].status = IDLE;
 // 	    close(jobQ.Q[currentJob].i_socketId);
@@ -573,9 +617,10 @@ void dlog(int lvl, const char *msg, int jobIndex)
         }
         if (jobIndex>=0)
         {
+	 pthread_mutex_lock(&jobQ_lock);
             printf("Transfer Report:\n");
             printf("================\n");
-            printf("\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.2f\n",
+            printf("\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.4f\n",
                    jobQ.Q[jobIndex].cp_client,
                    jobQ.Q[jobIndex].cp_fileName,
                    statusStringMap[jobQ.Q[jobIndex].status],
@@ -586,13 +631,14 @@ void dlog(int lvl, const char *msg, int jobIndex)
             {
                 fprintf(logFile,"Transfer Report:\n");
                 fprintf(logFile,"================\n");
-                fprintf(logFile, "\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.2f\n",
+                fprintf(logFile, "\tClient IP:%s\n\tFile name:%s\n\tEnd Status:%s\n\tPackets:%d\n\tTime(Sec.):%.4f\n",
                         jobQ.Q[jobIndex].cp_client,
                         jobQ.Q[jobIndex].cp_fileName,
                         statusStringMap[jobQ.Q[jobIndex].status],
                         jobQ.Q[jobIndex].ui_packets,
                         jobQ.Q[jobIndex].d_time);
             }
+	    pthread_mutex_unlock(&jobQ_lock);
         }
 
     }
