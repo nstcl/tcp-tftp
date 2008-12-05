@@ -218,38 +218,39 @@ void *worker(void *id)
 	struct dirent *ep;
 	short count = 0;
 	short tmp;
-    
-    
+    	Status status = IDLE;
+    	int currentJob = -10, assignedSlave = -10;
     
     
     sigemptyset(&empty_set); // create an empty signal mask to reject all signals
     sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
     sprintf(msg,"slave number %d started\n",wid);
     dlog(DEBUG,msg,-1);
-
+	
     while(kill_thread_flag)
     {
         //printf("%d",wid);
-        int currentJob = -10, assignedSlave = -10;
-        Status status = IDLE;
-
-        pthread_mutex_lock(&jobQ_lock); // protect queue pointer
-        if(jobQ.output == MAX_JOBS-1) jobQ.output = -1; // cycle queue output index
-        if((jobQ.Q[jobQ.output+1].status == ASSIGNED) && (jobQ.Q[jobQ.output+1].i_socketId != 0))
-        {
-            printf("***************** thread(%d) input:%d \t output:%d \tsid=%d \tstatus=%s ******\n",wid,jobQ.input,jobQ.output,jobQ.Q[jobQ.output+1].i_socketId, statusStringMap[jobQ.Q[jobQ.output+1].status]);
-            jobQ.Q[++(jobQ.output)].status = TRANSFERING;
-            jobQ.Q[jobQ.output].i_slave = wid;
-        }
-        //also save the status in a non volatile var
-        if(jobQ.Q[jobQ.output].status==TRANSFERING)
-        {
-            currentJob = jobQ.output;
-            status = TRANSFERING;
-        }
-        assignedSlave = jobQ.Q[jobQ.output].i_slave;
-        pthread_mutex_unlock(&jobQ_lock); // release queue for other thread to change
-
+        
+        
+	if(status != TRANSFERING)
+	{
+		pthread_mutex_lock(&jobQ_lock); // protect queue pointer
+		if(jobQ.output == MAX_JOBS-1) jobQ.output = -1; // cycle queue output index
+		if((jobQ.Q[jobQ.output+1].status == ASSIGNED) && (jobQ.Q[jobQ.output+1].i_socketId != 0))
+		{
+		printf("***************** thread(%d) input:%d \t output:%d \tsid=%d \tstatus=%s ******\n",wid,jobQ.input,jobQ.output,jobQ.Q[jobQ.output+1].i_socketId, statusStringMap[jobQ.Q[jobQ.output+1].status]);
+		jobQ.Q[++(jobQ.output)].status = TRANSFERING;
+		jobQ.Q[jobQ.output].i_slave = wid;
+		}
+		//also save the status in a non volatile var
+		if(jobQ.Q[jobQ.output].status==TRANSFERING)
+		{
+		currentJob = jobQ.output;
+		status = TRANSFERING;
+		}
+		assignedSlave = jobQ.Q[jobQ.output].i_slave;
+		pthread_mutex_unlock(&jobQ_lock); // release queue for other thread to change
+	}
 
 
 
@@ -289,7 +290,7 @@ void *worker(void *id)
 	/*Extract header information from received buffer*/
 	    header = (struct tftphdr *)rxBuf;
 		// states:WAIT,READ,WRITE,DATA,ACK,ERROR,CHDIR,LIST
-		while(state != TERM_STATE)
+		while((state != TERM_STATE) && (status != DONE))
 		{
 			switch(state)
 			{
@@ -506,6 +507,7 @@ void *worker(void *id)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
             /// Finalize current job
+	    status = TRANSFERING;
 // 	    pthread_mutex_lock(&jobQ_lock);
 // 	    jobQ.Q[currentJob].status = IDLE;
 // 	    close(jobQ.Q[currentJob].i_socketId);
