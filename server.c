@@ -33,7 +33,7 @@
 ////////////////////// data structures ///////////////////////
 /* job definition */
 typedef enum _Status {IDLE, ASSIGNED, TRANSFERING, FAIL, ABORT, DONE}Status; // networking statuses
-typedef enum _State {WAIT_STATE, READ_STATE, WRITE_STATE, DATA_STATE, ACK_STATE, ERROR_STATE, CHDIR_STATE, LIST_STATE, TERM_STATE}State; // states for ftp state machine
+typedef enum _State {WAIT_STATE, READ_STATE, WRITE_STATE, DATA_STATE, ACK_STATE, ERROR_STATE, CHDIR_STATE, LIST_STATE, CLOSE_STATE, TERM_STATE}State; // states for ftp state machine
 typedef struct _s_jobDescriptor
 {
     char cp_client[16];//max string is '111.111.111.111\0'
@@ -205,11 +205,23 @@ int sendData(int sd,char *buffer, int len,short count, int isWrite)
 void *worker(void *id)
 {
     
-    int wid = *((int *)id);
-    char msg[32];
-    sigset_t empty_set;
-    FILE *localFile = NULL, *remoteFile = NULL;
-
+	int wid = *((int *)id);
+	char msg[32];
+	sigset_t empty_set;
+	FILE *localFile = NULL, *remoteFile = NULL;
+ 	char *txBuf,*rxBuf;
+	int rxCount,txCount;
+	struct tftphdr *header;
+	char errorCode = -1;
+	State state = WAIT_STATE;
+	DIR *dp;
+	struct dirent *ep;
+	short count = 0;
+	short tmp;
+    
+    
+    
+    
     sigemptyset(&empty_set); // create an empty signal mask to reject all signals
     sigprocmask(SIG_BLOCK, &empty_set, NULL); // apply empty set to thread in order to ignore any signal.
     sprintf(msg,"slave number %d started\n",wid);
@@ -248,19 +260,7 @@ void *worker(void *id)
         if((status == TRANSFERING) && (assignedSlave == wid))
         {
 
-            char *txBuf,*rxBuf;
-            int rxCount,txCount;
-	    struct tftphdr *header;
-	    char errorCode = -1;
-	    State state = WAIT_STATE;
-	    DIR *dp;
-	    struct dirent *ep;
-	    short count = 0;
-	    short tmp;
-	    
-	    
-	    
-	    
+	    if(!(txBuf||rxBuf))
             if(((txBuf=(char *)calloc(BUFFER_SIZE, sizeof(char)))==NULL) || ((rxBuf=(char *)calloc(BUFFER_SIZE,sizeof(char)))==NULL))
             {
                 dlog(CRITICAL, "couldn't allocate memory for rx and/or tx buffers", -1);
@@ -322,6 +322,21 @@ void *worker(void *id)
 							strcpy((char *)(jobQ.Q[currentJob].cp_fileName),".");
 							pthread_mutex_unlock( &jobQ_lock);
 						break;
+						case CLOSE:
+							pthread_mutex_lock(&jobQ_lock);
+							jobQ.Q[currentJob].status = IDLE;
+							close(jobQ.Q[currentJob].i_socketId);
+							pthread_mutex_unlock(&jobQ_lock);
+							pthread_mutex_lock(&gScwd_lock);
+							chdir((char *)(DEFAULT_DIR));
+							pthread_mutex_unlock(&gScwd_lock);
+							status = IDLE;
+							//dlog(INFO, "Moving to next Job",-1);
+							if (txBuf) free(txBuf);
+							if (rxBuf) free(rxBuf);
+							state = TERM_STATE;
+							
+						break;
 					}
 				break;
 				case READ_STATE:
@@ -380,7 +395,7 @@ void *worker(void *id)
 							jobQ.Q[currentJob].status = DONE;
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
-							state = TERM_STATE;
+							state = WAIT_STATE;
 							dlog(INFO, "Finished sending file, report to follow:", currentJob);
 						} 
 						
@@ -390,7 +405,7 @@ void *worker(void *id)
 							state = ERROR_STATE;
 						}
 						else 
-						if(state != TERM_STATE)
+						if(state != WAIT_STATE)
 						{
 							state = DATA_STATE;
 						}
@@ -424,7 +439,7 @@ void *worker(void *id)
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
 							dlog(INFO, "Finished receiving file, report to follow:", currentJob);
-							state = TERM_STATE;
+							state = WAIT_STATE;
 						}
 						else 
 						{
@@ -491,17 +506,17 @@ void *worker(void *id)
 
             /// TODO: make the following line a function that will empty job descriptor for new connection
             /// Finalize current job
-	    pthread_mutex_lock(&jobQ_lock);
-	    jobQ.Q[currentJob].status = IDLE;
-	    close(jobQ.Q[currentJob].i_socketId);
-	    pthread_mutex_unlock(&jobQ_lock);
-	    pthread_mutex_lock(&gScwd_lock);
-	    chdir((char *)(DEFAULT_DIR));
-	    pthread_mutex_unlock(&gScwd_lock);
-	    status = IDLE;
-	    //dlog(INFO, "Moving to next Job",-1);
-            if (txBuf) free(txBuf);
-            if (rxBuf) free(rxBuf);
+// 	    pthread_mutex_lock(&jobQ_lock);
+// 	    jobQ.Q[currentJob].status = IDLE;
+// 	    close(jobQ.Q[currentJob].i_socketId);
+// 	    pthread_mutex_unlock(&jobQ_lock);
+// 	    pthread_mutex_lock(&gScwd_lock);
+// 	    chdir((char *)(DEFAULT_DIR));
+// 	    pthread_mutex_unlock(&gScwd_lock);
+// 	    status = IDLE;
+// 	    //dlog(INFO, "Moving to next Job",-1);
+//             if (txBuf) free(txBuf);
+//             if (rxBuf) free(rxBuf);
         }
         fflush(stdout);
         if(logFile) fflush(logFile);
