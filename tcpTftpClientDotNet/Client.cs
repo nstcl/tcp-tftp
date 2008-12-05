@@ -159,13 +159,11 @@ namespace tcpTftpClientDotNet
             byte[] txBuf = new byte[516];
             byte[] data;
             int txCount;
-            string s = System.IO.File.ReadAllText(filename);
-            System.IO.StringReader sr = new System.IO.StringReader(s);
             FileStream fs = new FileStream(filename, FileMode.Open);
             BinaryReader br = new BinaryReader(fs);
             short blockNumber;
             ASCIIEncoding ae = new ASCIIEncoding();
-            sendTftpPacket(Client.OP_CODE.WRQ, filename, null, -1);//send WRQ
+            sendTftpPacket(Client.OP_CODE.WRQ, Path.GetFileName(filename), null, -1);//send WRQ
             //char[] chunk = new char[512];
             //int dataLength = sr.ReadBlock(chunk, 0, 512);
             do
