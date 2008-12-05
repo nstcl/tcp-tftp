@@ -21,6 +21,7 @@ namespace tcpTftpClientDotNet
             c.PutBinaryFile("..\\..\\Client.cs");
             Console.WriteLine("Receiving File");
             Console.WriteLine(c.GetFile("Client.cs"));
+            c.Close();
             //Console.WriteLine("Press Any Key To Exit ...");
             //Console.ReadKey(true);
         }
