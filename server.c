@@ -28,6 +28,7 @@
 #define DEFAULT_SERVER_PORT 5069
 #define NUM_OF_SLAVES 2
 #define LOGFILE "./server.log"
+#define DIRCONTENTS "___DIR_CONTENTS___"
 #define DEFAULT_DIR "/tmp"
 #define MAX_JOBS BACKLOG
 #define LOGLEVEL DEBUG
@@ -211,7 +212,7 @@ void *worker(void *id)
 	int wid = *((int *)id);
 	char msg[32];
 	sigset_t empty_set;
-	FILE *localFile = NULL, *remoteFile = NULL;
+	FILE *localFile = NULL, *remoteFile = NULL, *dirContents = NULL;
  	char *txBuf,*rxBuf;
 	int rxCount,txCount;
 	struct tftphdr *header;
@@ -219,7 +220,6 @@ void *worker(void *id)
 	State state = WAIT_STATE;
 	DIR *dp;
 	struct dirent *ep;
-	char dirListing[255][80];
 	short count = 0;
 	short tmp;
     	Status status = IDLE;
@@ -553,9 +553,9 @@ void *worker(void *id)
 					
 					if(stat("/tmp",&st) == 0)
 					pthread_mutex_lock( &jobQ_lock);
-					if(stat(jobQ.Q[currentJob].cp_fileName,&st) == 0)
+					if(stat((char *)(jobQ.Q[currentJob].cp_fileName),&st) == 0)
 					{
-						chdir(jobQ.Q[currentJob].cp_fileName);
+						chdir((char *)(jobQ.Q[currentJob].cp_fileName));
 						tmp = htons(ACK);
 						memcpy(txBuf,&tmp, sizeof(tmp));
 						tmp = htons(count);
@@ -575,17 +575,41 @@ void *worker(void *id)
 				break;
 				case LIST_STATE:	
 					
+					
+					if ((dirContents = fopen(DIRCONTENTS,"w")) == NULL)
+					{
+						state = ERROR_STATE;
+							errorCode = EACCESS;
+							char m[80];
+							dlog(CRITICAL,(char *)strerror_r(errno,m,80),-1);
+							pthread_mutex_lock(&jobQ_lock);
+							sendError(jobQ.Q[currentJob].i_socketId, txBuf, errorCode);
+							pthread_mutex_unlock(&jobQ_lock);
+							break;
+					}
 					dp = opendir ("./");
 					if (dp != NULL)
 						{
-						while ((ep = readdir (dp)))
-						puts (ep->d_name);
-						(void) closedir (dp);
+							while ((ep = readdir (dp)))
+								fputs (ep->d_name, dirContents);
+							(void) closedir (dp);
+							fflush(dirContents);
+							fclose(dirContents);
+							state = READ_STATE;
+							// this is a trick to cast the string pointer into the union, then when 
+							// accessing the header->th_stuff it will be transform to a string pointer again
+							header->th_code = (int)DIRCONTENTS;
+							pthread_mutex_lock(&jobQ_lock);
+							sprintf((char *)(jobQ.Q[currentJob].cp_fileName), "%s",DIRCONTENTS) ;
+							pthread_mutex_unlock(&jobQ_lock);
+							
 						}
 					else
-						perror ("Couldn't open the directory");
+						{
+							dlog (CRITICAL,"Couldn't open the directory", -1);
+							exit(-1);
+						}
 					
-					return 0;
 				break;
 				default:
 				break;
