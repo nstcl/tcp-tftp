@@ -288,7 +288,7 @@ void *worker(void *id)
                 if(!rxCount)
                 {
                     jobQ.Q[currentJob].status = ABORT;
-                    dlog(INFO, "connection was lost, no data received", -1);
+		    dlog(INFO, "connection was lost, no data received", currentJob);
                 }
                 else
                 {
@@ -296,7 +296,7 @@ void *worker(void *id)
 		    char m[80];
 		    dlog(WARNING,(char *)strerror_r(errno,m,80),-1);
 		    //free(m);
-		    dlog(WARNING, "no data received(an error occurred). connection will be closed", -1);
+		    dlog(WARNING, "no data received(an error occurred). connection will be closed", currentJob);
                 }
                 jobQ.Q[currentJob].status = IDLE;
                 close(jobQ.Q[currentJob].i_socketId);
