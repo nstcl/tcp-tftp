@@ -381,7 +381,7 @@ int getFile(char* strParam,int* totalBytes,char* errorMsg)//-1 error 0 -success
 		switch(buffBlock.opcode)
 		{
 			case DATA:
-				fwrite(recvBuff+4,1,numbytes,pFile);
+				fwrite(recvBuff+4,1,numbytes-4,pFile);
 				fileBytes+=(numbytes-4);
 				sendAck(buffBlock.number);           
 				break;
