@@ -1,4 +1,8 @@
 # KDevelop Custom Project File List
+Client
+Client/clienttftp.c
+Client/functions.h
+Client/tftp_header.h
 Makefile
 client.c
 server.c

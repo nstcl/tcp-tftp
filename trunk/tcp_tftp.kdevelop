@@ -44,7 +44,15 @@
       <filetype>Makefile</filetype>
       <filetype>CMakeLists.txt</filetype>
     </filetypes>
-    <blacklist/>
+    <blacklist>
+      <path>TFTPClient</path>
+      <path>TFTPClient/functions.h</path>
+      <path>TFTPClient/main.c</path>
+      <path>TFTPClient/Makefile</path>
+      <path>TFTPClient/tftp.h</path>
+      <path>TFTPClient/tftp_header.h</path>
+      <path>TFTPClient/welcome.h</path>
+    </blacklist>
     <build>
       <buildtool>make</buildtool>
       <builddir/>
