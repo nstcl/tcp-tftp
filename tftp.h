@@ -43,7 +43,7 @@
 #define INFO -3
 #define DEBUG -4
 #define	SEGSIZE		512		/* data segment size */
-
+#define MAX_CMD 1000/*max buffer for command input */
 /*********************************************/
 /*
  * Trivial File Transfer Protocol (IEN-133) - based on arpa/tftp.h
@@ -90,4 +90,10 @@ const unsigned short BUFFER_SIZE = SEGSIZE+sizeof(struct tftphdr);
 #define	EBADID		5		/* unknown transfer ID */
 #define	EEXISTS		6		/* file already exists */
 #define	ENOUSER		7		/* no such user */
+
+
+
+
+
+
 
