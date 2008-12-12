@@ -1,6 +1,4 @@
 /***************************************************************************
- *   Copyright (C) 2008 by Koby Hershkovitz,04914465,khershko (alpha)      *
- *   khershko@localhost.localdomain                                        *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
@@ -213,7 +211,7 @@ void *worker(void *id)
 	char msg[32];
 	sigset_t empty_set;
 	FILE *localFile = NULL, *remoteFile = NULL, *dirContents = NULL;
- 	char *txBuf,*rxBuf;
+ 	char *txBuf = NULL,*rxBuf = NULL;
 	int rxCount,txCount;
 	struct tftphdr *header;
 	int errorCode = -1;
@@ -309,11 +307,13 @@ void *worker(void *id)
 	/*Extract header information from received buffer*/
 	    header = (struct tftphdr *)rxBuf;
 		// states:WAIT,READ,WRITE,DATA,ACK,ERROR,CHDIR,LIST
+		count = 0; // init the ack number counter
 		while((state != TERM_STATE) && (status != DONE))
 		{
 			switch(state)
 			{
 				case WAIT_STATE:
+					count = 0; // init the ack number counter
 					switch(ntohs(header->th_opcode))
 					{
 						case RRQ: 
@@ -373,6 +373,7 @@ void *worker(void *id)
 					pthread_mutex_lock(&gScwd_lock);
 					chdir((char *)(gScwd[currentJob]));
 					pthread_mutex_unlock(&gScwd_lock);
+					
 					if((localFile = fopen(header->th_stuff,"r")) == NULL)
 					{
 						//send error packet
@@ -389,6 +390,7 @@ void *worker(void *id)
 					pthread_mutex_lock(&gScwd_lock);
 					chdir((char *)(gScwd[currentJob]));
 					pthread_mutex_unlock(&gScwd_lock);
+					
 					if((remoteFile = fopen(header->th_stuff,"w")) == NULL)
 					{
 						//send error packet
@@ -470,10 +472,18 @@ void *worker(void *id)
 							jobQ.Q[currentJob].status = DONE;
 							jobQ.Q[currentJob].ui_packets = count;
 							jobQ.Q[currentJob].d_time = (endTime.tv_sec - startTime.tv_sec)+(endTime.tv_usec - startTime.tv_usec)/1000000.0;
+							// send final ACK
+							tmp = htons(ACK);
+							memcpy(txBuf,&tmp, sizeof(tmp));
+							tmp = htons(count);
+							memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
+							txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
+							// END SEND ACK
 							pthread_mutex_unlock(&jobQ_lock);
 							status = DONE;
 							dlog(INFO, "Finished receiving file, report to follow:", currentJob);
-							state = WAIT_STATE;
+							//state = WAIT_STATE;
+							
 						}
 						else 
 						{
@@ -492,6 +502,7 @@ void *worker(void *id)
 						memcpy(txBuf+sizeof(tmp),&tmp, sizeof(tmp));
 						txCount = send(jobQ.Q[currentJob].i_socketId,txBuf,sizeof(tmp)*2,0);
 						state = DATA_STATE;
+						//printf("ACK on BLOCK#%d\n",count);
 					}
 					else
 					{
@@ -500,6 +511,7 @@ void *worker(void *id)
 							gettimeofday(&endTime, NULL);
 						}while((rxCount<=0) && ((endTime.tv_sec-startTime.tv_sec)<5));
 						//TODO check for errors
+						//printf("ACK on BLOCK#%d\n",ntohs(((struct tftphdr *)rxBuf)->th_block));
 						if((ntohs(((struct tftphdr *)rxBuf)->th_opcode)==ACK) && (ntohs(((struct tftphdr *)rxBuf)->th_block)==count))
 						{
 							if(localFile) state = DATA_STATE;
